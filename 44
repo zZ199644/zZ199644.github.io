@@ -1,1 +1,268 @@
 444
+RMS Summary
+【1】只在重启EAP时才会问一次RMS format,故Format变了，必须重启EAP
+【2】新type上线RMS，需要加两张表
+rms_recipe_compare_type
+rms_recipe_format（按理说走ini format不需要这个表加，但是Precheck又会问这张表记录有没有，所以还得加）如何加rms_recipe_format ，RMSUI-》Fucntion-》Upload recipeformat
+需要by type 将format 导出，备份，以备使用
+ 
+【3】上了Ini format 的EAP rollback回老版本/报错load ini format fail
+1.	RMS Ini Format从XML/LIST改成NA-----一定使用configUI生成
+2.	formatted_body_spec_flag 为T的recipe要删掉，不然会报load ini format fail
+SELECT * FROM rms_recipe_state WHERE eqp_id='KCAPO02' AND formatted_body_spec_flag='T';
+DELETE FROM rms_recipe_state WHERE eqp_id='KCAPO02' AND formatted_body_spec_flag='T';
+COMMIT;
+3.rms recipebody要重新upload，并且重新卡spec
+
+【4】RMSUI 新界面简介
+	Function-》ParalevelRecipeBody
+这个界面和原先UploadRecipe界面功能一样，是把机台端解析出的recipebody 传给RMS 数据库
+                ParalevelrecipeBody & Uploadrecipe 只能选择其中之一，在哪个界面报错 就换另外一个界面。这个界面是全新的recipe的解析结果，请PE认真核对、验收。
+	Function-》ParalevelRecipeSpec
+和原先EditrecipeSpec界面功能一样，是设spec的
+               ParalevelRecipeSpec & EditrecipeSpec不卡，都可以用，但是目前ParalevelRecipeSpec 还不是很成熟，所以建议大家还是使用EditrecipeSpec
+	Function-》ParalevelRecipeOnair界面 
+才是设置某个recipe 是否是云端recipe（会不会Download recipebody to EQP，会不会delete）。RecipeOnAir功能与SetSpec功能逻辑上和使用上都是完全独立的，完全可以单独使用，不建议混在一起操作。
+
+【5】RMS 查case 中心思想
+SELECT * FROM rms_eap_logic_config; 查看EAP Action，例如，报错EAP Action: Reject Logic index is : 477就是要看这张表，这张表里栏位的介绍
+	RMS_VALIDATION：MES askloadinfo/Jobprepareinfo MES回的
+	PARSE_FLAG：就是Comparetype表的ParseFlag
+	RECIPE_STATE：
+	EXPIRED：IRC Idletime时间过期
+	DUMMYRCP： rms_recipe_key_word表里某recipe的关键字
+	NOBODY ：RMS_Recipe_Body 没有这个recipe的记录
+	NOSPEC ：RMS_Recipe_Spec 没有这个recipe的记录
+	Release：rms_recipe_state里recipe_status
+	Disable ：rms_recipe_state里recipe_status
+	T 
+	F 
+	EAP Action分类
+	ParseRecipe-> RMS 回的RMSNext_CheckRecipeState body里ParseFlag=T
+	Reject---就是reject, RMS 回的RMSNext_CheckRecipeState body里ParseFlag=F
+	Bypass—就是OK，RMS 回的RMSNext_CheckRecipeState body里ParseFlag=F ?
+【6】MES 回复的RMSValidation Flag逻辑
+RMSValidation是F，可以不卡spec，但是上了spec的也会check，有OOS/OOC也会卡住
+RMSValidation 是T，seq及subrecipe都要卡spec（cimmgr.rms_eap_logic_config, Reject Logic index is XXX就是到这张表去看逻辑）
+MES 答复RMSValidation flag逻辑如下 
+
+ 
+
+
+【7】rms_recipe_state 几个栏位的含义
+更新recipe state 
+	parm_spec_flag预留，暂时不用
+
+	RMS_RECIPE_STATE.FORMATTED_BODY_FLAG
+当前recipe 是否是新recipe body,当使用UI的ParaLevelRecipeBody界面upload recipe之后，会更新为T
+	RMS_RECIPE_STATE.DOWNLOAD_BODY_FLAG
+当前recipe是否需要download,当使用UI的ParaLevelRecipeOnAir界面uploadtoroa提交之后，会更新为T
+告知user 新版UI 使用熟练，且spec 正常卡控后，再到此界面enable ROA 
+	RMS_RECIPE_STATE.FORMATTED_BODY_SPEC_FLAG
+当前recipe的现有spec是在旧recipe body上设置的，在UI上给新recipe body设置过spec，并且approve生效之后，会更新为T
+
+【8】RMSNext_CheckRecipeState两个栏位
+	<formattedBodyFlag>T</formattedBodyFlag>
+新界面uploadrecipe并且spec签核成功，RMS才会回T，即是这个栏位RMS_RECIPE_STATE.FORMATTED_BODY_SPEC_FLAG
+	<parseBodyFlag>为T
+    SELECT *  FROM RMS_EAP_LOGIC_CONFIG  WHERE  EAP_ACTION  =    'ParseRecipe';                                                        
+【9】seq和subrecipe link关系是何时建立的
+link关系存在rms_recipe_link 是server update/insert的，
+在call RMSNext_CompareRecipeWithSpec或者
+CompareRecipeWithINX时更新到rms_recipe_link的
+
+
+【10】查看RMS recipe 比对结果
+rms_recipe_running_log：Bypass，Exist Para OOS，No Para OOS，No Spec，Recipe Structure Mismatch，Reject
+SELECT DISTINCT model.eqp_id,model.eqp_model FROM rms_recipe_running_log Log ,eap_cfg_model_eqp model WHERE Log.rms_result='Recipe Structure Mismatch' AND Log.eqp_id=model.eqp_id;
+【11】RMSNext_GetRecipeDownloadInfo 逻辑（rms_recipe_link起来并且subrecipe也要uploadtoRoA才能回subrecipe）
+Server Sql：
+
+SELECT * FROM RMS_Recipe_Link WHERE eqp_id= 'KDAPY71' AND RECIPE_ID='main/PRODUCT/0620UPY0800-IT';
+
+SELECT Time_Check, Checksum, Parameter_Check, Partial_Flag,Parse_Flag,MAX_HIBERARCHY_INX FROM RMS_RECIPE_COMPARE_TYPE
+ WHERE Eqp_Model = :eqpModel
+
+SELECT STATE.RECIPE_INX,STATE.RECIPE_ID,HIBERARCHY_INX,CHAMBER_ID,      
+【12】统计download次数
+ SELECT eqp_id,recipe_id,action_category, Count(*) FROM rms_download_running_log WHERE eqp_id IN('KTBSA71','KDRTN03','KWNIS71') GROUP BY eqp_id,recipe_id,action_category;
+【13】UI上DoubleCheck DraftSpec&ApprovedSpec
+ 
+
+RMSUI->EditRecipeSpec->GetExistingSpec里
+GetapprovedSpec是查询已经生效的spec，你可以到这里check一下有没有卡上spec
+
+GetDraftRecipeSpec是查询  已经在RMSUI提交，正在走签核的spec
+ 
+
+
+
+
+
+
+
+
+
+
+TroubleShooting
+【1】报recipestate is disable的解法
+  （PPT 12页，User在RMSUI上操作）
+DB 后台更新sql：
+SELECT * from cimmgr.rms_recipe_state WHERE eqp_id='KDLSA01' AND recipe_id='’;
+SELECT DISTINCT BYPASS from cimmgr.rms_recipe_body WHERE eqp_id='KDLSA01';
+
+---Bypass是Disable或者Release
+   UPDATE  cimmgr.rms_recipe_body   SET  BYPASS   ='Release' WHERE eqp_id='KDLSA01' AND recipe_id='XXXX';
+-----RECIPE_STATUS   默认null,Disable,Release
+    UPDATE  cimmgr.rms_recipe_state   SET  RECIPE_STATUS   ='Release' WHERE eqp_id='KDLSA01' AND recipe_id='XX';
+【2】Recipe  GetRecipeDowLoadInfo 失败. 
+错误描述: RMS-00105: Err:RMS : recipe state err \r\n!!(2019-09-10 08:27:31) FOUP KFP12838 执行Recipe Download失败, 错误描述: GetRecipeDowLoadInfo fail. Err: RMS-00105: Err:RMS : recipe state err .
+
+BJ答复RM 5.16 把报错写清楚些，以免user造成误解（见下面邮件）
+ 
+
+NOBody是指没有uploadrecipebody，对应cimmgr.RMS_Recipe_body，到UI上UploadRecipeBody 
+NOSpec是有body，没有设spec，对应Cimmgr.RMS_recipe_Spec,到UI上上Upload 
+
+10:49:33: [I][KFP12749.20190909104932.FAB8P2][1][RMS][SI]RMSNext_GetRecipeDownloadInfo=<msgBody><subEqpId>KDASK01</subEqpId><eqpModel>AMAT_VANTAGE</eqpModel><subEQPModel>AMAT_VANTAGE_CGA</subEQPModel><autoSyncFlag>F</autoSyncFlag><sequenceRecipeListNo>1</sequenceRecipeListNo><sequenceRecipeList><sequenceRecipeId>Z0950SPIKE-20LG-A</sequenceRecipeId><recipeListNo>1</recipeListNo><recipeList><recipeId>60sec</recipeId><recipeLevel>1</recipeLevel><chamberId></chamberId><subChamberId></subChamberId><recipeInx></recipeInx><userEditBodyVersion></userEditBodyVersion><downloadBodyInx></downloadBodyInx><downloadLifeCountSpec>0</downloadLifeCountSpec><downloadLifeCountCategory></downloadLifeCountCategory><downloadBodyFlag>F</downloadBodyFlag><errCode>101</errCode><errDesc>RMS-00101: Err:RMS eqpId: KDASK01 Recipe: 60sec RMS_state: NOBODY EAP Action: Reject Logic index is : 477</errDesc></recipeList></sequenceRecipeList></msgBody>
+10:49:33: [E][KFP12749.20190909104932.FAB8P2][1][EQS][NA]ReplyRMS GetRecipeDowLoadInfo fail. Err: RMS-00105: Err:RMS : recipe state err 
+10:49:33: [E][KFP12749.20190909104932.FAB8P2][1][EQS][NA]Recipe  GetRecipeDowLoadInfo failed. Error Desc: RMS-00105: Err:RMS : recipe state err 
+10:49:33: [N][KFP12749.20190909104932.FAB8P2][1][EQS][NA]EQS Step: EQS_GETRECIPEDOWNLOADINFO complete.
+10:49:33: [E][KFP12749.20190909104932.FAB8P2][1][RM][NA]Handle recipe download for KFP12749 fail. Error Desc: GetRecipeDowLoadInfo fail. Err: RMS-00105: Err:RMS : recipe state err .
+
+【3】CompareRecipeWithINX failed可能的原因
+1.	从下表了解一下当前EQP、lot的情况：
+SELECT * FROM rms_recipe_running_log
+   WHERE eqp_id='KELFN01'
+     AND lot_id='KT8109.C04'
+   ORDER BY update_time desc
+如果 RMS_Result=”Exist Para OOS”,说明机台端的Recipe body有参数超限，需要PE处理，具体OOS信息可以在RMS UI-optionsQueryMismatchHistory查询
+如果RMS_Result=” Recipe Structure Mismatch”,详见下文
+【4】Recipe Structure Mismatch Fail可能的原因
+1.	从下表了解一下整体的变更情况，看最后一次RMSresult=” No Para OOS”的记录与当前失败的记录相比，spec version有没有变化
+
+   SELECT * FROM rms_recipe_running_log
+    WHERE eqp_id='KDATA01'
+      AND recipe_id='Z-M0WCMP-14SF-010TV1'
+    ORDER BY update_time desc
+    ;
+
+
+2.	如果与成功的记录相比，Spec version变了，说明spec变了，通常这种情况是RMS_recipe_body表中的recipe body有问题。可以用TuxedoSimulator call RMS server，拿到当前DB中的recipe body与当前失败的EAP log中的recipe body对比一下。
+打给RMS server的msg:
+
+Rule name: GetRecipe
+ <msgBody>
+    <eqpId>EEASN06</eqpId>
+    <recipeId>PAFB1S0-SAS2</recipeId>
+    <chamberType/>
+  </msgBody>
+
+a)	如果DB中的recipe body与EAP log中的body对比，缺少参数导致错位：嘱咐PE先upload recipe body再set spec
+b)	如果DB中的recipe body与EAP log中的body对比，缺少step导致错位：
+i.	缺少的是一个空的step节点：先确认PE使用的RMSUI的版本(RMSUIHELP)，需要UI的版本大于3.03.00,如果不是，需要在新版的RMSUI，重新upload recipe body+Set spec
+
+空step是指只有Step头，没有ParameterSet如下
+<StepSet>
+	<parameter name="StepID" value="1" />
+	<parameter name="StepName" value="" />
+	<parameter name="SubStepId" value="" />
+	<parameter name="StepCategory" value="" />
+	<parameter name="parameterSetNo" value="0" />
+</StepSet>
+
+ii.	缺少的不是一个空的step节点：需要嘱咐PE重新upload recipe body再set spec
+c)	如果DB中的recipe body与EAP log中的body对比，是新旧格式类型的差异，先和PE确认一下这个recipe是sequence 还是 sub recipe,再到一下DB核对一下：
+
+ 	SELECT eqp_id,recipe_id,hiberarchy_inx,formatted_body_flag,
+           download_body_flag,formatted_body_spec_flag 
+      FROM rms_recipe_state
+     WHERE eqp_id='KDATA01'
+       AND recipe_id='Z-M0WCMP-14SF-010TV1'
+			
+	Hiberarchy=0 说明是sequence
+Hiberarchy=1说明是sub recipe
+
+如果DB的信息与PE提供信息一致：
+i.	formatted_body_spec=T，EAP需要提供新版本的recipe body。
+ii.	formatted_body_spec=F，EAP需要提供旧版本的EAP。 
+如果EAP提供的不对，是EAP的bug。
+如果DB的信息有多条并且存与PE提供信息不一致的记录：
+i.	确认PE使用了正确的方式：
+Sequence body:Function->ParalevelRecipeBody->QuerySequenceList 
+SubRecipe body:Function->ParalevelRecipeBody->QueryRecipeList
+并请PE在以下界面确认一下Recipe类型：
+ 
+ii.	确认EAP type使用的ini format配置是否正确，如果不对需要EAP owner更正
+Ini format的路径：Z:\NextAllBin\EQP_Model&SubModel.ini
+
+
+3.	如果与成功的记录相比，Spec version没变，说明EQP recipe body变了，通常这种情况是当前的EQP recipe body有问题。可以拿出相应的时间点的EAP log,使用对比工具对比一下即可。
+a)	如果成功的EAP log与失败的EAP log相比，缺少参数导致错位：需要嘱咐PE重新upload recipe body再set spec
+b)	如果成功的EAP log与失败的EAP log相比，缺少step导致错位：需要嘱咐PE重新upload recipe body再set spec
+c)	如果成功的EAP log与失败的EAP log相比，是新旧格式类型的差异，那么一定是EAP的问题，需要落实一下EAP是否存在升级的情况，需要及时roll back到上一版。
+值班工程师做到此处即可。此后步骤系EAP owner自行追查。
+d)	运行以下sql，查看Recipe _state_table在成功时刻的值和失败时刻的值有什么差异
+SELECT eqp_id,recipe_id,hiberarchy_inx,formatted_body_spec_flag,update_time   FROM rms_recipe_state_log 
+ WHERE eqp_id='KEMAS21'
+ AND recipe_id='PACB1S0-14000'
+ ORDER BY update_time desc;
+•	如果 hiberarchy_inx发生了变化，需要检查EAP赋值错误（sequence=0，subRecipe=1）。
+•	如果formatted_body_spec_flag发生了变化，要看EAP是否按照这个flag给了正确format的Recipe body（如果formatted_body_spec_flag=T，新版本的recipe body，如果formatted_body_spec_flag=F，旧版本的recipe body）。
+以上两处，有不对的地方EAP要改code。改code的时候要注意，对于一些一开始就是在ini format基础上开发解析功能的type，无论formatted_body_spec_flag的值是什么，都应该给新版本的recipe body
+•	如果两个值都没有发生变化，那么需要看新旧EAP版本之间针对给出新版本 recipe body的判断逻辑是否一致，如果不一致，需要更正新版本，保持兼容旧版本。
+【5】Query Recipelist Timeout
+EAP config RMS enable flag是不是F
+
+【6】Query Recipelist看不到XXX recipe
+RMSUI-》Function-》QueryRecipeSecurityInfo界面
+User把SecurityInfo init设成Normal/14nm/28nm了吗
+
+ 
+
+若SecurityInfo设成Normal也看不到,再看logS7F20机台是否回了那个recipe，若是，那只能重启RMSUI
+若QueryRecipeSecurityInfo都看不到recipe，且机台回了，那可能有延迟，等会重启RMSUI再试下
+【7】打开RMSUI报InitSFW Failed
+ 
+任务管理器RMSUI进程杀死
+【8】BaselineRecipe为空，
+ 
+ 
+
+
+
+【9】报Para OOS/OOC，到RMSUI上查询MismatchHistory
+ 
+RMSUI->Options->QueryMismatchHistory
+ 
+【10】Seq&Subrecipe都做了ROA，为什么只有seq download？
+     Seq和subrecipe link 关系还没建立（很早之前开会是UI改版，在uploadrecipe时link，但是FE 没有向BJ 要confirm mail，更没有提单子）
+link关系存在rms_recipe_link 是server update/insert的，
+在call RMSNext_CompareRecipeWithSpec或者
+CompareRecipeWithINX时更新到rms_recipe_link的
+     
+
+【11】MES 回复RMSVlidationFlag 逻辑
+1.	QE maintain 哪些prod 需要check RMS SPEC
+2.	MES maintain QE 设定的prod 哪些prodctionType 需要check RMS SPEC
+满足1.2 则需要check RMS SPEC
+ 
+
+
+<msgBody>
+	<subEqpId>KTAAL21</subEqpId>
+	<eqpModel>ENDURA_CGA</eqpModel>
+	<subEQPModel>AMAT_VANTAGE_CGA</subEQPModel>
+	<recipeId>CHD-DUMMY-D</recipeId>
+	<recipeLevel>0</recipeLevel>
+	<chamberId/>
+	<subChamberId/>
+	<recipeInx>5867181</recipeInx>
+	<errCode>0</errCode>
+	<errDescription/>
+	<parseBodyFlag>T</parseBodyFlag>
+	<formattedBodyFlag>F</formattedBodyFlag> 
+	old eap type(2 parser function) F: old parser  T:new parser (ini format)
+	new eap type(1 parser function ini format) F: keep single parser T:keep single parser
+	<recipeAttrListNo>0</recipeAttrListNo>
+</msgBody>
